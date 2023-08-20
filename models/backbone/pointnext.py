@@ -140,12 +140,14 @@ class SetAbstraction(nn.Module):
     def forward(self, pf):
         p, f = pf
         if self.is_head:
+            idx = torch.arange(p.size(1)).repeat(p.size(0), 1).to(p.device)
             f = self.convs(f)  # (n, c)
         else:
             if not self.all_aggr:
                 idx = self.sample_fn(p, p.shape[1] // self.stride).long()
                 new_p = torch.gather(p, 1, idx.unsqueeze(-1).expand(-1, -1, 3))
             else:
+                idx = torch.arange(p.size(1)).repeat(p.size(0), 1).to(p.device)
                 new_p = p
             """ DEBUG neighbor numbers. 
             query_xyz, support_xyz = new_p, p
@@ -167,7 +169,7 @@ class SetAbstraction(nn.Module):
             if self.use_res:
                 f = self.act(f + identity)
             p = new_p
-        return p, f
+        return p, f, idx
 
 
 class FeaturePropogation(nn.Module):
@@ -437,7 +439,7 @@ class PointNextEncoder(nn.Module):
         if f0 is None:
             f0 = p0.clone().transpose(1, 2).contiguous()
         for i in range(0, len(self.encoder)):
-            p0, f0 = self.encoder[i]([p0, f0])
+            p0, f0, _ = self.encoder[i]([p0, f0])
         return f0.squeeze(-1)
 
     def forward_seg_feat(self, p0, f0=None):
@@ -446,11 +448,13 @@ class PointNextEncoder(nn.Module):
         if f0 is None:
             f0 = p0.clone().transpose(1, 2).contiguous()
         p, f = [p0], [f0]
+        pc_idxs = [torch.arange(p[0].size(1)).repeat(p[0].size(0), 1).to(p0.device)]    # (batch, npoints)
         for i in range(0, len(self.encoder)):
-            _p, _f = self.encoder[i]([p[-1], f[-1]])
+            _p, _f, _local_pc_idx = self.encoder[i]([p[-1], f[-1]])
             p.append(_p)
             f.append(_f)
-        return p, f
+            pc_idxs.append(pc_idxs[-1].gather(1, _local_pc_idx))
+        return p, f, pc_idxs
 
     def forward(self, p0, f0=None):
         return self.forward_seg_feat(p0, f0)
